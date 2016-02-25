@@ -43,35 +43,42 @@ router.use(function (req, res, next) {
 
     graph.setAccessToken(req.headers.token);
     graph.get("me", function (err, fb_res) {
-        User.findOne({
-                userid: fb_res.id
-            }, function (err, user) {
-                if (user == null) {
-                    user = new User();
-                }
-                user.userid = fb_res.id;
-                user.name = fb_res.name;
-                user.token = req.headers.token;
-                user.save();
+        if (err){
+            res.send(err);
+        }else {
+            User.findOne({
+                    userid: fb_res.id
+                }, function (err, user) {
+                    if (user == null) {
+                        user = new User();
+                    }
+                    user.userid = fb_res.id;
+                    user.name = fb_res.name;
+                    user.token = req.headers.token;
+                    user.friends = [];
+                    user.save();
 
-                graph.get("me/friends", function (err, fb_res) {
-                    User.findOne({
-                        token: req.headers.token,
-                    }).populate('friends').exec(function (err, user) {
-                        fb_res.data.forEach(function (friend) {
-                            User.findOne({userid: friend.id}, function (err, other_user) {
-                                if (other_user != null) {
-                                    user.friends.push(friend.id);
-                                }
-                            });
-                        });
-                        console.log("current user : " + user);
-                        user.save();
-                        next();
-                    })
-                });
-            }
-        );
+                    graph.get("me/friends", function (err, fb_res) {
+                        User.findOne({
+                            token: req.headers.token,
+                        }).exec(function (err, user) {
+                            for( var i=0; i<fb_res.data.length; i++){
+                                var friend_id = fb_res.data[i].id;
+                                User.findOne({userid: friend_id}, function (err, other_user) {
+                                    if (other_user!=null) {
+                                        user.friends.set(i, other_user.userid);
+                                        // save user w/ modification on friends' array
+                                    }
+                                });
+                            }
+                            console.log(user.friends);
+                        }).then(function(){
+                            next();
+                        })
+                    });
+                }
+            );
+        }
     });
 });
 
@@ -109,14 +116,23 @@ router.route('/user/:userid')
 router.route('/events')
     // create a new event
     .post(function (req, res) {
-        var event = new Event()
-        event.latitude = req.body.latitude;
-        event.longitude = req.body.longitude;
-        event.date = new Date(req.body.date);
-        event.create_by = req.body.token;
-        event.save();
-        res.json({
-            event: event,
+        graph.setAccessToken(req.headers.token);
+        graph.get("me?fields=id", function(err, fb_res){
+            if (err){
+                res.send(err);
+            }else {
+                var event = new Event();
+                event.latitude = req.body.latitude;
+                event.longitude = req.body.longitude;
+                event.date = new Date(req.body.date);
+                event.created_by = fb_res.id;
+                event.save(function (err) {
+                    console.log(err);
+                });
+                res.json({
+                    event: event,
+                });
+            }
         });
     })
     // get all events
