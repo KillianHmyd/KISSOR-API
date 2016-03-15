@@ -42,7 +42,7 @@ router.use(function (req, res, next) {
     console.log("TOKEN : " + req.headers.token);
 
     graph.setAccessToken(req.headers.token);
-    graph.get("me", function (err, fb_res) {
+    graph.get("me?fields=picture,id,first_name,last_name", function (err, fb_res) {
         if (err){
             res.send(err);
         }else {
@@ -51,30 +51,37 @@ router.use(function (req, res, next) {
                 }, function (err, user) {
                     if (user == null) {
                         user = new User();
+                        user.friends = [];
                     }
                     user.userid = fb_res.id;
-                    user.name = fb_res.name;
+                    user.first_name = fb_res.first_name;
+                    user.last_name = fb_res.last_name;
+                    user.photo_url = fb_res.picture.data.url;
                     user.token = req.headers.token;
-                    user.friends = [];
+
                     user.save();
 
                     graph.get("me/friends", function (err, fb_res) {
                         User.findOne({
                             token: req.headers.token,
-                        }).exec(function (err, user) {
-                            for( var i=0; i<fb_res.data.length; i++){
+                        }).exec(function (err, user2) {
+                            var i;
+                            var finish = false;
+                            for(i=0; i<fb_res.data.length; i++){
+                                console.log(i);
                                 var friend_id = fb_res.data[i].id;
-                                User.findOne({userid: friend_id}, function (err, other_user) {
-                                    if (other_user!=null) {
-                                        user.friends.set(i, other_user.userid);
-                                        // save user w/ modification on friends' array
+                                User.findOne({userid : friend_id}, function(err, other_user){
+                                    if(other_user != null){
+                                        if(user.friends.indexOf(other_user.userid) <= -1) {
+                                            user.friends.push(other_user.userid);
+                                            user.save();
+                                        }
                                     }
-                                });
+                                })
                             }
+                            req.user = user;
                             console.log(user.friends);
-                        }).then(function(){
-                            next();
-                        })
+                        }).then(function(){next()})
                     });
                 }
             );
@@ -92,8 +99,9 @@ router.use(function (req, res, next) {
 
 router.route('/user')
     .get(function (req, res) {
-        User.findOne({token: req.headers.token}).populate('friends').exec(function (err, user) {
+        User.findOne({token: req.headers.token}).exec(function (err, user) {
             if (err) {
+                console.log(err)
                 res.send(err);
             }
             res.json(user);
@@ -102,8 +110,9 @@ router.route('/user')
 
 router.route('/user/:userid')
     .get(function (req, res) {
-        User.findOne({token: req.headers.token}).populate("friends").exec(function (err, user) {
-            if (friends.contains(req.params.userid)) {
+        User.findOne({token: req.headers.token}).exec(function (err, user) {
+            console.log(user)
+            if (user.friends.indexOf(req.params.userid) > -1 || req.user.userid == req.params.userid) {
                 User.findOne({userid: req.params.userid}).exec(function (err, user) {
                     res.json(user);
                 })
@@ -137,15 +146,40 @@ router.route('/events')
     })
     // get all events
     .get(function (req, res) {
-        Event.find(function (err, events) {
-            if (err) {
-                res.send(err);
+        User.findOne({token: req.headers.token}).exec(function (err, user) {
+            if(err)
+                res.send(err)
+            var allEvents = {lenght : 0, events: []};
+            var inserted = 0;
+            allEvents.total = 0;
+            var i;
+            if(user.friends.length == 0){
+                res.json({
+                    total : 0,
+                    events : []
+                })
             }
-            res.json({
-                total: events.length,
-                events: events,
-            });
-        });
+            else{
+                user.friends.push(user.userid);
+            }
+            for(i = 0; i < user.friends.length; i++){
+                Event.find({created_by: user.friends[i]}).exec(function (err, events) {
+                    if (err) {
+                        res.send(err);
+                    }
+                    allEvents.total += events.length
+                    for(var j=0; j < events.length; j++){
+                        allEvents.events.push(events[j]);
+                    }
+                    if(++inserted == user.friends.length){
+                        res.json({
+                            total : allEvents.total,
+                            events : allEvents.events
+                        })
+                    }
+                });
+            }
+        })
     });
 
 router.route("/events/:eventid")
@@ -187,7 +221,50 @@ router.route("/events/:eventid")
             res.json({event: event})
         });
 
+    });
+
+router.route("/participation")
+    .post(function(req,res){
+        graph.setAccessToken(req.headers.token);
+        graph.get("me?fields=id", function(err, fb_res){
+            if (err){
+                res.send(err);
+            }else {
+                var participation = new Participation();
+                participation.eventid = req.body.eventid;
+                participation.userid = fb_res.id;
+                participation.save(function (err) {
+                    console.log(err);
+                });
+                res.json({
+                    participation: participation,
+                });
+            }
+        });
     })
+
+router.route("/participation/user")
+    .get(function(req,res){
+        User.findOne({token: req.headers.token}).exec(function (err, user) {
+            if(err)
+                res.send(err)
+            var allParticipations = {lenght : 0, participations: []};
+            allParticipations.total = 0;
+            Participation.find({userid: user.userid}).exec(function (err, participations) {
+                    if (err) {
+                        res.send(err);
+                    }
+                    allParticipations.total += participations.length
+                    for(var j=0; j < participations.length; j++){
+                        allParticipations.participations.push(participations[j]);
+                    }
+                    res.json({
+                        total : allParticipations.total,
+                        participations : allParticipations.participations
+                    })
+                });
+        })
+    });
 
 
 app.get('/', function (req, res) {

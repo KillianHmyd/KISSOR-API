@@ -14,13 +14,17 @@ var UserSchema = new Schema({
             type: String,
             required: true
         },
-        name: {
+        first_name: {
+            type: String,
+            required: true
+        },
+        last_name: {
             type: String,
             required: true
         },
         photo_url: {
             type: String,
-            //required:true
+            required:true
         },
         friends: {
             type:[String],
